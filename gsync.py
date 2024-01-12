@@ -13,7 +13,9 @@ from googleapiclient.http import MediaIoBaseDownload
 import iso8601
 
 parser = argparse.ArgumentParser(
-    prog=sys.argv[0], description="Syncing tool for google drive"
+    prog=sys.argv[0],
+    description="Syncing tool for google drive",
+    epilog="Author: Diwas Rimal, License: MIT",
 )
 parser.add_argument("remotepath")
 parser.add_argument("localpath")
