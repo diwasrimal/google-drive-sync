@@ -20,6 +20,12 @@ parser = argparse.ArgumentParser(
 parser.add_argument("remotepath")
 parser.add_argument("localpath")
 parser.add_argument(choices=["fetch", "push"], dest="action")
+parser.add_argument(
+    "--export-pdf",
+    action="store_true",
+    dest="use_always_pdf",
+    help="Export files like google docs, slides as pdf while fetching",
+)
 args = parser.parse_args()
 
 # Scopes required by out application
@@ -52,7 +58,7 @@ EXPORT_EXTENSIONS = {
     MIMES["gslides"]: "pptx",
 }
 EXPORT_MIMES = EXPORT_EXTENSIONS.keys()
-EXPORT_ALWAYS_PDF = True
+EXPORT_ALWAYS_PDF = args.use_always_pdf
 
 
 def main():
