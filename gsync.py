@@ -119,14 +119,21 @@ def fetch(file_service, remote_folder, localpath):
             fetch(file_service, sub_folder, sub_localpath)
             continue
 
-        dst = f"{localpath}/{name}"
-        if name in local_filenames:
+        # Destination file on local directory
+        dstname = (
+            f"{name}.{get_export_extension(mime)}" if mime in EXPORT_MIMES else name
+        )
+        dstpath = f"{localpath}/{dstname}"
+
+        if dstname in local_filenames:
             remote_mtime = iso8601.parse_date(file["modifiedTime"])
-            local_mtime = datetime.fromtimestamp(os.stat(dst).st_mtime, tz=timezone.utc)
+            local_mtime = datetime.fromtimestamp(
+                os.stat(dstpath).st_mtime, tz=timezone.utc
+            )
             if remote_mtime > local_mtime:
-                download_file(file_service, file, dst)
+                download_file(file_service, file, dstpath)
         else:
-            download_file(file_service, file, dst)
+            download_file(file_service, file, dstpath)
 
 
 def find_remote_folder(file_service, path):
@@ -155,6 +162,10 @@ def find_remote_folder(file_service, path):
 
 def resolve_remote_shortcut(file_service, file):
     return file_service.get(fileId=file["shortcutDetails"]["targetId"]).execute()
+
+
+def get_export_extension(mime_type):
+    return "pdf" if EXPORT_ALWAYS_PDF else EXPORT_EXTENSIONS[mime_type]
 
 
 def push(file_service, remotepath, localpath):
@@ -192,9 +203,7 @@ def download_file(file_service, file, dst):
             raise Exception("Downloading folder not supported")
 
         if mime in EXPORT_MIMES:
-            exp_ext = "pdf" if EXPORT_ALWAYS_PDF else EXPORT_EXTENSIONS[mime]
-            exp_mime = MIMES[exp_ext]
-            dst = f"{dst}.{exp_ext}"
+            exp_mime = MIMES[get_export_extension(mime)]
             request = file_service.export_media(fileId=file["id"], mimeType=exp_mime)
         else:
             request = file_service.get_media(fileId=file["id"])
