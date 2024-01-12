@@ -1,0 +1,7 @@
+downloaded/
+credentials.json
+token.json
+venv
+.DS_Store
+working.txt
+
