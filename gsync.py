@@ -119,21 +119,16 @@ def fetch(file_service, remote_folder, localpath):
             fetch(file_service, sub_folder, sub_localpath)
             continue
 
-        # Destination file on local directory
-        dstname = (
-            f"{name}.{get_export_extension(mime)}" if mime in EXPORT_MIMES else name
-        )
+        # Download or export file based on its mime
+        should_export, exp_ext, exp_mime = get_export_info(mime)
+        dstname = f"{name}.{exp_ext}" if should_export else name
         dstpath = f"{localpath}/{dstname}"
 
         if dstname in local_filenames:
-            remote_mtime = iso8601.parse_date(file["modifiedTime"])
-            local_mtime = datetime.fromtimestamp(
-                os.stat(dstpath).st_mtime, tz=timezone.utc
-            )
-            if remote_mtime > local_mtime:
-                download_file(file_service, file, dstpath)
+            if remote_modification(file) > local_modification(dstpath):
+                download_file(file_service, file, dstpath, should_export, exp_mime)
         else:
-            download_file(file_service, file, dstpath)
+            download_file(file_service, file, dstpath, should_export, exp_mime)
 
 
 def find_remote_folder(file_service, path):
@@ -164,8 +159,22 @@ def resolve_remote_shortcut(file_service, file):
     return file_service.get(fileId=file["shortcutDetails"]["targetId"]).execute()
 
 
-def get_export_extension(mime_type):
-    return "pdf" if EXPORT_ALWAYS_PDF else EXPORT_EXTENSIONS[mime_type]
+def get_export_info(mime):
+    if mime in EXPORT_MIMES:
+        exp_ext = "pdf" if EXPORT_ALWAYS_PDF else EXPORT_EXTENSIONS[mime]
+        exp_mime = MIMES[exp_ext]
+        return True, exp_ext, exp_mime
+    else:
+        return False, None, None
+
+
+def remote_modification(file) -> datetime:
+    return iso8601.parse_date(file["modifiedTime"])
+
+
+def local_modification(filepath) -> datetime:
+    mtime = os.stat(filepath).st_mtime
+    return datetime.fromtimestamp(mtime, tz=timezone.utc)
 
 
 def push(file_service, remotepath, localpath):
@@ -196,31 +205,28 @@ def get_credentials():
     return creds
 
 
-def download_file(file_service, file, dst):
+def download_file(file_service, file, dstpath, should_export=False, exp_mime=None):
+    if should_export:
+        print(f"Exporting '{file['name']}' -> '{dstpath}'")
+        request = file_service.export_media(fileId=file["id"], mimeType=exp_mime)
+    else:
+        print(f"Downloading '{file['name']}' -> '{dstpath}'")
+        request = file_service.get_media(fileId=file["id"])
+
     try:
-        mime = file["mimeType"]
-        if mime == MIMES["gfolder"]:
-            raise Exception("Downloading folder not supported")
-
-        if mime in EXPORT_MIMES:
-            exp_mime = MIMES[get_export_extension(mime)]
-            request = file_service.export_media(fileId=file["id"], mimeType=exp_mime)
-        else:
-            request = file_service.get_media(fileId=file["id"])
-
-        print(f"Downloading '{file['name']}' -> '{dst}'")
         f = io.BytesIO()
         downloader = MediaIoBaseDownload(f, request)
         done = False
         while not done:
             _, done = downloader.next_chunk()
-        with open(dst, "wb") as outfile:
+        with open(dstpath, "wb") as outfile:
             outfile.write(f.getbuffer())
-
     except HttpError as err:
         print(err)
-    except Exception as err:
-        print(err)
+
+
+def upload_file(file_service, localpath, remotepath):
+    pass
 
 
 if __name__ == "__main__":
