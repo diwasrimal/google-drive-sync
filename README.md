@@ -1,12 +1,11 @@
 # Google Drive Sync
 
 This is a simple cli application that allows syncing files in Google Drive
-to local storage and vice versa. The project uses Google Drive API, hence to run the
-application, a Google Cloud Project is required.
+to local storage and vice versa, using Google Drive API.
 
 ## Requirements
 * Python (Recent)
-* A Google Could Project with
+* A Google Cloud Project with
     * Google Drive API enabled
     * OAuth enabled
 
@@ -15,7 +14,7 @@ OAuth credentials provided to you as `credentials.json` in the project directory
 
 ## Setup
 Quick setup for unix like systems
-```console
+```sh
 git clone https://github.com/diwasrimal/google-drive-sync.git
 cd google-drive-sync
 python3 -m venv venv

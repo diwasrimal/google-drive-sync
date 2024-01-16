@@ -4,4 +4,5 @@ token.json
 venv
 .DS_Store
 working.txt
+db.sqlite3
 
