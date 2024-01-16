@@ -159,7 +159,9 @@ def find_remote_folder(file_service, path):
 def list_remote_folder(file_service, folder):
     fields = "files(id, name, mimeType, modifiedTime, shortcutDetails/targetId)"
     return (
-        file_service.list(q=f"'{folder['id']}' in parents", fields=fields)
+        file_service.list(
+            q=f"'{folder['id']}' in parents and trashed = false", fields=fields
+        )
         .execute()
         .get("files", [])
     )
