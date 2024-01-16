@@ -1,16 +1,19 @@
+from os import pread
 import sys
 import argparse
 import os.path
 import io
+import mimetypes
 import sqlite3
 from datetime import datetime, timezone
 
 from google.oauth2.credentials import Credentials
 from google.auth.transport.requests import Request
+from google.oauth2.reauth import is_interactive
 from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
-from googleapiclient.http import MediaIoBaseDownload
+from googleapiclient.http import MediaIoBaseDownload, MediaFileUpload
 import iso8601
 
 parser = argparse.ArgumentParser(
@@ -35,8 +38,7 @@ DB_FILE = "./db.sqlite3"
 # https://developers.google.com/drive/api/guides/api-specific-auth#drive-scopes
 # If modifying these scopes, delete the file token.json.
 SCOPES = [
-    # "https://www.googleapis.com/auth/drive",
-    "https://www.googleapis.com/auth/drive.readonly",
+    "https://www.googleapis.com/auth/drive",
     "https://www.googleapis.com/auth/drive.metadata",
 ]
 
@@ -82,7 +84,10 @@ def main():
         fetch(file_service, remote_folder, localpath)
 
     elif action == "push":
-        push(file_service, remotepath, localpath)
+        if not os.path.exists(localpath):
+            print(f"Invalid localpath: {localpath}")
+            return
+        push(file_service, remote_folder, localpath)
 
 
 def fetch(file_service, remote_folder, localpath):
@@ -127,7 +132,77 @@ def fetch(file_service, remote_folder, localpath):
 
         if should_download:
             if _ := download_file(file_service, file, dstpath, should_export, exp_mime):
-                record_download(db, name, mime, dstname, should_export)
+                folder_id = remote_folder["id"]
+                record_download(db, folder_id, name, mime, dstname, should_export)
+                last_modified = to_epoch(remote_modification(file))
+                os.utime(dstpath, (last_modified, last_modified))
+
+    db.close()
+
+
+def push(file_service, remote_folder, localpath):
+    """Uploads local changes to remote folder"""
+    print("Pushing...")
+
+    remote_files = {}
+    for file in list_remote_folder(file_service, remote_folder):
+        remote_files[file["name"]] = file
+
+    remote_filenames = {f["name"] for f in remote_files.values()}
+    local_filenames = set(os.listdir(localpath))
+
+    db = get_database_connection(DB_FILE)
+    db.row_factory = sqlite3.Row
+    cur = db.cursor()
+    prev_exports = cur.execute(
+        "SELECT * FROM downloads WHERE exported = 1 AND folder_id = ?",
+        [remote_folder["id"]],
+    ).fetchall()
+
+    for srcname in local_filenames:
+        srcpath = f"{localpath}/{srcname}"
+        if os.path.isdir(srcpath):
+            print("Uploading directory not supported!")
+            # Make remote dir if not exists
+            # push(sub_folder, sub_localpath)
+            continue
+
+        # Determine if the file should be imported to docs, slides, etc format
+        # For this, we look into previous export records and
+        imp_mime = None
+        imp_name = None
+        for export in prev_exports:
+            if export["local_name"] == srcname:
+                imp_mime = export["remote_mime"]
+                imp_name = export["remote_name"]
+
+        is_inside_drive = srcname in remote_filenames or imp_name in remote_filenames
+        lmodification = local_modification(srcpath)
+        if is_inside_drive:
+            remote_file = remote_files[imp_name or srcname]
+            lmodification = local_modification(srcpath)
+            if lmodification > remote_modification(remote_file):
+                # TODO: Fix this time bug
+                # $ python3 gsync.py "/Courses/undergrad/test" ./downloaded-web push
+                print(lmodification)
+                print(remote_modification(remote_file))
+                file = update_file(
+                    file_service,
+                    srcpath,
+                    remote_file,
+                    imp_name,
+                    imp_mime,
+                    to_rfc3339(lmodification),
+                )
+        else:
+            file = upload_file(
+                file_service,
+                srcpath,
+                remote_folder,
+                imp_name,
+                imp_mime,
+                to_rfc3339(lmodification),
+            )
 
     db.close()
 
@@ -189,9 +264,12 @@ def local_modification(filepath) -> datetime:
     return datetime.fromtimestamp(mtime, tz=timezone.utc)
 
 
-def push(file_service, remotepath, localpath):
-    """Uploads local changes to remote folder"""
-    print("Pushing...")
+def to_epoch(date: datetime) -> float:
+    return date.timestamp()
+
+
+def to_rfc3339(date: datetime) -> str:
+    return date.strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def get_credentials():
@@ -230,6 +308,7 @@ def get_database_connection(dbfile):
     cur.execute(
         """
         CREATE TABLE downloads (
+            folder_id NUMERIC NOT NULL,
             remote_name TEXT NOT NULL,
             remote_mime TEXT NOT NULL,
             local_name TEXT NOT NULL,
@@ -264,19 +343,62 @@ def download_file(
         return False
 
 
-def record_download(db, remote_name, local_name, remote_mime, is_exported):
+def record_download(db, folder_id, remote_name, local_name, remote_mime, is_exported):
     cur = db.cursor()
     cur.execute(
         """
-        INSERT INTO downloads(remote_name, remote_mime, local_name, exported)
-        VALUES(?, ?, ?, ?)""",
-        [remote_name, local_name, remote_mime, is_exported],
+        INSERT INTO downloads(folder_id, remote_name, remote_mime, local_name, exported)
+        VALUES(?, ?, ?, ?, ?)""",
+        [folder_id, remote_name, local_name, remote_mime, is_exported],
     )
     db.commit()
 
 
-def upload_file(file_service, localpath, remotepath):
-    pass
+def upload_file(
+    file_service, localpath, remote_folder, imp_name, imp_mime, modified_date
+):
+    """Uploads file on localpath to remote folder on drive"""
+    localname = localpath.split("/")[-1]
+    remotename = imp_name or localname
+    localmime = mimetypes.guess_type(localname)[0] or "text/plain"
+    metadata = {}
+    metadata["parents"] = [remote_folder["id"]]
+    metadata["name"] = remotename
+    metadata["modifiedTime"] = modified_date
+    if imp_mime:
+        metadata["mimeType"] = imp_mime or localmime
+
+    try:
+        print(f"Uploading '{localpath}' -> '{remotename}'")
+        media = MediaFileUpload(localpath, mimetype=localmime, resumable=True)
+        file = file_service.create(
+            body=metadata,
+            media_body=media,
+            # modifiedDate=modified_date,
+            # modifiedDateBehaviour="fromBody",
+        ).execute()
+    except Exception as err:
+        print(err)
+
+
+def update_file(
+    file_service, localpath, remote_file, imp_name, imp_mime, modified_date
+):
+    localname = localpath.split("/")[-1]
+    localmime = mimetypes.guess_type(localname)[0] or "text/plain"
+    metadata = {"name": localname, "modifiedTime": modified_date}
+    try:
+        print(f"Updating '{localpath}' -> '{remote_file['name']}'")
+        media = MediaFileUpload(localpath, mimetype=localmime, resumable=True)
+        file = file_service.update(
+            fileId=remote_file["id"],
+            body=metadata,
+            media_body=media,
+            # modifiedDate=modified_date,
+            # modifiedDateBehaviour="fromBody",
+        ).execute()
+    except Exception as err:
+        print(err)
 
 
 if __name__ == "__main__":
