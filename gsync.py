@@ -2,6 +2,7 @@ import sys
 import argparse
 import os.path
 import io
+import sqlite3
 from datetime import datetime, timezone
 
 from google.oauth2.credentials import Credentials
@@ -27,6 +28,8 @@ parser.add_argument(
     help="Export files like google docs, slides as pdf while fetching",
 )
 args = parser.parse_args()
+
+DB_FILE = "./db.sqlite3"
 
 # Scopes required by out application
 # https://developers.google.com/drive/api/guides/api-specific-auth#drive-scopes
@@ -70,10 +73,11 @@ def main():
     service = build("drive", "v3", credentials=creds)
     file_service = service.files()
 
+    remote_folder = find_remote_folder(file_service, remotepath)
+    if remote_folder is None:
+        return
+
     if action == "fetch":
-        remote_folder = find_remote_folder(file_service, remotepath)
-        if remote_folder is None:
-            return
         print(f"Fetching from {remotepath}")
         fetch(file_service, remote_folder, localpath)
 
@@ -83,16 +87,9 @@ def main():
 
 def fetch(file_service, remote_folder, localpath):
     """Downloads remote changes"""
-    folder_id = remote_folder["id"]
-
-    fields = "files(id, name, mimeType, modifiedTime, shortcutDetails/targetId)"
-    remote_files = (
-        file_service.list(q=f"'{folder_id}' in parents", fields=fields)
-        .execute()
-        .get("files", [])
-    )
+    remote_files = list_remote_folder(file_service, remote_folder)
     if not remote_files:
-        print(f"{remote_folder} is empty")
+        print(f"{remote_folder['name']} is empty")
         return
 
     # Make local dir if missing
@@ -100,7 +97,7 @@ def fetch(file_service, remote_folder, localpath):
         print(f"Making folder '{localpath}'")
         os.makedirs(localpath)
 
-    local_filenames = set(os.listdir(localpath))
+    db = get_database_connection(DB_FILE)
 
     # Fetch files in depth-first manner
     for file in remote_files:
@@ -123,12 +120,16 @@ def fetch(file_service, remote_folder, localpath):
         should_export, exp_ext, exp_mime = get_export_info(mime)
         dstname = f"{name}.{exp_ext}" if should_export else name
         dstpath = f"{localpath}/{dstname}"
-
-        if dstname in local_filenames:
-            if remote_modification(file) > local_modification(dstpath):
-                download_file(file_service, file, dstpath, should_export, exp_mime)
+        if not os.path.exists(dstpath):
+            should_download = True
         else:
-            download_file(file_service, file, dstpath, should_export, exp_mime)
+            should_download = remote_modification(file) > local_modification(dstpath)
+
+        if should_download:
+            if _ := download_file(file_service, file, dstpath, should_export, exp_mime):
+                record_download(db, name, mime, dstname, should_export)
+
+    db.close()
 
 
 def find_remote_folder(file_service, path):
@@ -153,6 +154,15 @@ def find_remote_folder(file_service, path):
             return None
 
     return curr_folder
+
+
+def list_remote_folder(file_service, folder):
+    fields = "files(id, name, mimeType, modifiedTime, shortcutDetails/targetId)"
+    return (
+        file_service.list(q=f"'{folder['id']}' in parents", fields=fields)
+        .execute()
+        .get("files", [])
+    )
 
 
 def resolve_remote_shortcut(file_service, file):
@@ -205,7 +215,32 @@ def get_credentials():
     return creds
 
 
-def download_file(file_service, file, dstpath, should_export=False, exp_mime=None):
+def get_database_connection(dbfile):
+    if os.path.exists(dbfile):
+        return sqlite3.connect(dbfile)
+
+    print(f"Making database '{dbfile}'")
+    with open(dbfile, "w") as f:
+        pass
+
+    db = sqlite3.connect(dbfile)
+    cur = db.cursor()
+    cur.execute(
+        """
+        CREATE TABLE downloads (
+            remote_name TEXT NOT NULL,
+            remote_mime TEXT NOT NULL,
+            local_name TEXT NOT NULL,
+            exported INT NOT NULL
+        )
+        """
+    )
+    return db
+
+
+def download_file(
+    file_service, file, dstpath, should_export=False, exp_mime=None
+) -> bool:
     if should_export:
         print(f"Exporting '{file['name']}' -> '{dstpath}'")
         request = file_service.export_media(fileId=file["id"], mimeType=exp_mime)
@@ -221,8 +256,21 @@ def download_file(file_service, file, dstpath, should_export=False, exp_mime=Non
             _, done = downloader.next_chunk()
         with open(dstpath, "wb") as outfile:
             outfile.write(f.getbuffer())
-    except HttpError as err:
+        return True
+    except Exception as err:
         print(err)
+        return False
+
+
+def record_download(db, remote_name, local_name, remote_mime, is_exported):
+    cur = db.cursor()
+    cur.execute(
+        """
+        INSERT INTO downloads(remote_name, remote_mime, local_name, exported)
+        VALUES(?, ?, ?, ?)""",
+        [remote_name, local_name, remote_mime, is_exported],
+    )
+    db.commit()
 
 
 def upload_file(file_service, localpath, remotepath):
