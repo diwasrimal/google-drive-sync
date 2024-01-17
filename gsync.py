@@ -68,7 +68,7 @@ FILE_FIELDS = "files(id, name, mimeType, modifiedTime, shortcutDetails/targetId)
 
 def main():
     remotepath = args.remotepath.rstrip("/")
-    localpath = args.localpath.rstrip("/")
+    localpath = os.path.expanduser(args.localpath.rstrip("/"))
     action = args.action
 
     creds = get_credentials()

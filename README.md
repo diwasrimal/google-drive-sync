@@ -14,7 +14,7 @@ OAuth credentials provided to you as `credentials.json` in the project directory
 
 ## Setup
 Quick setup for unix like systems
-```sh
+```
 git clone https://github.com/diwasrimal/google-drive-sync.git
 cd google-drive-sync
 python3 -m venv venv
@@ -43,4 +43,4 @@ Author: Diwas Rimal, License: MIT
 ```
 
 ## TODO
-* Implement pushing local changes
+* Nothing right now :)
