@@ -180,12 +180,7 @@ def push(file_service, remote_folder, localpath):
         lmodification = local_modification(srcpath)
         if is_inside_drive:
             remote_file = remote_files[imp_name or srcname]
-            lmodification = local_modification(srcpath)
             if lmodification > remote_modification(remote_file):
-                # TODO: Fix this time bug
-                # $ python3 gsync.py "/Courses/undergrad/test" ./downloaded-web push
-                print(lmodification)
-                print(remote_modification(remote_file))
                 file = update_file(
                     file_service,
                     srcpath,
@@ -261,7 +256,7 @@ def remote_modification(file) -> datetime:
 
 def local_modification(filepath) -> datetime:
     mtime = os.stat(filepath).st_mtime
-    return datetime.fromtimestamp(mtime, tz=timezone.utc)
+    return datetime.fromtimestamp(mtime, tz=timezone.utc).replace(microsecond=0)
 
 
 def to_epoch(date: datetime) -> float:
