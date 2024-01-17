@@ -1,4 +1,3 @@
-from os import pread
 import sys
 import argparse
 import os.path
@@ -9,10 +8,8 @@ from datetime import datetime, timezone
 
 from google.oauth2.credentials import Credentials
 from google.auth.transport.requests import Request
-from google.oauth2.reauth import is_interactive
 from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
-from googleapiclient.errors import HttpError
 from googleapiclient.http import MediaIoBaseDownload, MediaFileUpload
 import iso8601
 
@@ -188,8 +185,6 @@ def push(file_service, remote_folder, localpath):
                     file_service,
                     srcpath,
                     remote_file,
-                    imp_name,
-                    imp_mime,
                     to_rfc3339(lmodification),
                 )
         else:
@@ -298,7 +293,7 @@ def get_database_connection(dbfile):
         return sqlite3.connect(dbfile)
 
     print(f"Making database '{dbfile}'")
-    with open(dbfile, "w") as f:
+    with open(dbfile, "w") as _:
         pass
 
     db = sqlite3.connect(dbfile)
@@ -373,7 +368,7 @@ def upload_file(
     try:
         print(f"Uploading '{localpath}' -> '{remotename}'")
         media = MediaFileUpload(localpath, mimetype=localmime, resumable=True)
-        file = file_service.create(
+        file_service.create(
             body=metadata,
             media_body=media,
         ).execute()
@@ -381,16 +376,14 @@ def upload_file(
         print(err)
 
 
-def update_file(
-    file_service, localpath, remote_file, imp_name, imp_mime, modified_date
-):
+def update_file(file_service, localpath, remote_file, modified_date):
     localname = localpath.split("/")[-1]
     localmime = mimetypes.guess_type(localname)[0] or "text/plain"
     metadata = {"name": localname, "modifiedTime": modified_date}
     try:
         print(f"Updating '{localpath}' -> '{remote_file['name']}'")
         media = MediaFileUpload(localpath, mimetype=localmime, resumable=True)
-        file = file_service.update(
+        file_service.update(
             fileId=remote_file["id"],
             body=metadata,
             media_body=media,
