@@ -133,7 +133,10 @@ def fetch(file_service, remote_folder, localpath):
         if should_download:
             if _ := download_file(file_service, file, dstpath, should_export, exp_mime):
                 folder_id = remote_folder["id"]
-                record_download(db, folder_id, name, mime, dstname, should_export)
+                file_id = file["id"]
+                record_download(
+                    db, folder_id, file_id, name, mime, dstname, should_export
+                )
                 last_modified = to_epoch(remote_modification(file))
                 os.utime(dstpath, (last_modified, last_modified))
 
@@ -155,7 +158,7 @@ def push(file_service, remote_folder, localpath):
     db.row_factory = sqlite3.Row
     cur = db.cursor()
     prev_exports = cur.execute(
-        "SELECT * FROM downloads WHERE exported = 1 AND folder_id = ?",
+        "SELECT * FROM downloads WHERE exported = 1 AND parent_id = ?",
         [remote_folder["id"]],
     ).fetchall()
 
@@ -303,7 +306,8 @@ def get_database_connection(dbfile):
     cur.execute(
         """
         CREATE TABLE downloads (
-            folder_id NUMERIC NOT NULL,
+            file_id NUMERIC PRIMARY KEY NOT NULL,
+            parent_id NUMERIC NOT NULL,
             remote_name TEXT NOT NULL,
             remote_mime TEXT NOT NULL,
             local_name TEXT NOT NULL,
@@ -338,13 +342,16 @@ def download_file(
         return False
 
 
-def record_download(db, folder_id, remote_name, local_name, remote_mime, is_exported):
+def record_download(
+    db, parent_id, file_id, remote_name, remote_mime, local_name, is_exported
+):
     cur = db.cursor()
     cur.execute(
         """
-        INSERT INTO downloads(folder_id, remote_name, remote_mime, local_name, exported)
-        VALUES(?, ?, ?, ?, ?)""",
-        [folder_id, remote_name, local_name, remote_mime, is_exported],
+        INSERT OR REPLACE INTO
+        downloads(file_id, parent_id, remote_name, remote_mime, local_name, exported)
+        VALUES(?, ?, ?, ?, ?, ?)""",
+        [file_id, parent_id, remote_name, local_name, remote_mime, is_exported],
     )
     db.commit()
 
@@ -369,8 +376,6 @@ def upload_file(
         file = file_service.create(
             body=metadata,
             media_body=media,
-            # modifiedDate=modified_date,
-            # modifiedDateBehaviour="fromBody",
         ).execute()
     except Exception as err:
         print(err)
@@ -389,8 +394,6 @@ def update_file(
             fileId=remote_file["id"],
             body=metadata,
             media_body=media,
-            # modifiedDate=modified_date,
-            # modifiedDateBehaviour="fromBody",
         ).execute()
     except Exception as err:
         print(err)
