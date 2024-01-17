@@ -62,6 +62,9 @@ EXPORT_EXTENSIONS = {
 EXPORT_MIMES = EXPORT_EXTENSIONS.keys()
 EXPORT_ALWAYS_PDF = args.use_always_pdf
 
+# These fields are used for a remote file
+FILE_FIELDS = "files(id, name, mimeType, modifiedTime, shortcutDetails/targetId)"
+
 
 def main():
     remotepath = args.remotepath.rstrip("/")
@@ -84,6 +87,7 @@ def main():
         if not os.path.exists(localpath):
             print(f"Invalid localpath: {localpath}")
             return
+        print(f"Pushing from {localpath}")
         push(file_service, remote_folder, localpath)
 
 
@@ -142,8 +146,6 @@ def fetch(file_service, remote_folder, localpath):
 
 def push(file_service, remote_folder, localpath):
     """Uploads local changes to remote folder"""
-    print("Pushing...")
-
     remote_files = {}
     for file in list_remote_folder(file_service, remote_folder):
         remote_files[file["name"]] = file
@@ -151,6 +153,7 @@ def push(file_service, remote_folder, localpath):
     remote_filenames = {f["name"] for f in remote_files.values()}
     local_filenames = set(os.listdir(localpath))
 
+    # Get details of exports done on previous fetch from database
     db = get_database_connection(DB_FILE)
     db.row_factory = sqlite3.Row
     cur = db.cursor()
@@ -161,10 +164,25 @@ def push(file_service, remote_folder, localpath):
 
     for srcname in local_filenames:
         srcpath = f"{localpath}/{srcname}"
+        lmodification = local_modification(srcpath)
+
+        # Recursively push folders
         if os.path.isdir(srcpath):
-            print("Uploading directory not supported!")
-            # Make remote dir if not exists
-            # push(sub_folder, sub_localpath)
+            sub_localpath = srcpath
+            if srcname in remote_filenames:
+                subfolder = remote_files[srcname]
+            else:
+                subfolder = file_service.create(
+                    body={
+                        "name": srcname,
+                        "mimeType": MIMES["gfolder"],
+                        "parents": [remote_folder["id"]],
+                        "modifiedTime": to_rfc3339(lmodification),
+                    },
+                    fields=FILE_FIELDS,
+                ).execute()
+
+            push(file_service, subfolder, sub_localpath)
             continue
 
         # Determine if the file should be imported to docs, slides, etc format
@@ -177,7 +195,6 @@ def push(file_service, remote_folder, localpath):
                 imp_name = export["remote_name"]
 
         is_inside_drive = srcname in remote_filenames or imp_name in remote_filenames
-        lmodification = local_modification(srcpath)
         if is_inside_drive:
             remote_file = remote_files[imp_name or srcname]
             if lmodification > remote_modification(remote_file):
@@ -225,10 +242,9 @@ def find_remote_folder(file_service, path):
 
 
 def list_remote_folder(file_service, folder):
-    fields = "files(id, name, mimeType, modifiedTime, shortcutDetails/targetId)"
     return (
         file_service.list(
-            q=f"'{folder['id']}' in parents and trashed = false", fields=fields
+            q=f"'{folder['id']}' in parents and trashed = false", fields=FILE_FIELDS
         )
         .execute()
         .get("files", [])
