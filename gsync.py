@@ -62,9 +62,6 @@ EXPORT_EXTENSIONS = {
 EXPORT_MIMES = EXPORT_EXTENSIONS.keys()
 EXPORT_ALWAYS_PDF = args.use_always_pdf
 
-# These fields are used for a remote file
-FILE_FIELDS = "files(id, name, mimeType, modifiedTime, shortcutDetails/targetId)"
-
 
 def main():
     remotepath = args.remotepath.rstrip("/")
@@ -146,6 +143,10 @@ def fetch(file_service, remote_folder, localpath):
 
 def push(file_service, remote_folder, localpath):
     """Uploads local changes to remote folder"""
+    if remote_folder["mimeType"] == MIMES["gshortcut"]:
+        print(f"Skipping shortcut '{localpath}' -> '{remote_folder['name']}'")
+        return
+
     remote_files = {}
     for file in list_remote_folder(file_service, remote_folder):
         remote_files[file["name"]] = file
@@ -172,6 +173,7 @@ def push(file_service, remote_folder, localpath):
             if srcname in remote_filenames:
                 subfolder = remote_files[srcname]
             else:
+                print(f"Creating remote folder for {srcpath}")
                 subfolder = file_service.create(
                     body={
                         "name": srcname,
@@ -179,7 +181,6 @@ def push(file_service, remote_folder, localpath):
                         "parents": [remote_folder["id"]],
                         "modifiedTime": to_rfc3339(lmodification),
                     },
-                    fields=FILE_FIELDS,
                 ).execute()
 
             push(file_service, subfolder, sub_localpath)
@@ -242,9 +243,10 @@ def find_remote_folder(file_service, path):
 
 
 def list_remote_folder(file_service, folder):
+    fields = "files(id, name, mimeType, modifiedTime, shortcutDetails/targetId)"
     return (
         file_service.list(
-            q=f"'{folder['id']}' in parents and trashed = false", fields=FILE_FIELDS
+            q=f"'{folder['id']}' in parents and trashed = false", fields=fields
         )
         .execute()
         .get("files", [])
