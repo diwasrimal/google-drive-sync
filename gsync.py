@@ -62,6 +62,11 @@ EXPORT_EXTENSIONS = {
 EXPORT_MIMES = EXPORT_EXTENSIONS.keys()
 EXPORT_ALWAYS_PDF = args.use_always_pdf
 
+# Filenames (or foldernames) listed in a file named .gsyncignore
+# will be ignored while pushing local changes
+IGNORE_SPECIFIER = ".gsyncignore"
+ALWAYS_IGNORE = {".DS_Store", IGNORE_SPECIFIER}
+
 
 def main():
     remotepath = args.remotepath.rstrip("/")
@@ -91,6 +96,7 @@ def main():
 def fetch(file_service, remote_folder, localpath):
     """Downloads remote changes"""
     remote_files = list_remote_folder(file_service, remote_folder)
+
     if not remote_files:
         print(f"{remote_folder['name']} is empty")
         return
@@ -153,6 +159,7 @@ def push(file_service, remote_folder, localpath):
 
     remote_filenames = {f["name"] for f in remote_files.values()}
     local_filenames = set(os.listdir(localpath))
+    ignored_filenames = find_ignored_files(localpath)
 
     # Get details of exports done on previous fetch from database
     db = get_database_connection(DB_FILE)
@@ -166,6 +173,11 @@ def push(file_service, remote_folder, localpath):
     for srcname in local_filenames:
         srcpath = f"{localpath}/{srcname}"
         lmodification = local_modification(srcpath)
+
+        # Skip ignored files
+        if srcname in ignored_filenames or srcname in ALWAYS_IGNORE:
+            print(f"Ignoring {srcpath}")
+            continue
 
         # Recursively push folders
         if os.path.isdir(srcpath):
@@ -216,6 +228,15 @@ def push(file_service, remote_folder, localpath):
             )
 
     db.close()
+
+
+def find_ignored_files(localpath) -> set[str]:
+    ignorefile = f"{localpath}/{IGNORE_SPECIFIER}"
+    return (
+        set(open(ignorefile).read().splitlines())
+        if os.path.exists(ignorefile)
+        else set()
+    )
 
 
 def find_remote_folder(file_service, path):

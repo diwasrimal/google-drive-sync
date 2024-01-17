@@ -42,5 +42,24 @@ options:
 Author: Diwas Rimal, License: MIT
 ```
 
+## Working
+* `remotepath` is the path of your drive folder. 'My Drive' is considered root (/).
+So a folder My Drive/Documents/exam is just /Documents/exam
+* `localpath` is the relative or absolute path of local folders.
+* `fetch` downloads new or modifies outdated local files.
+* `push` uploads or updates local files to drive.
+
+* A special file `.gsyncignore` can be used to ignore files that you don't want to
+upload to drive. For example the file can have
+```
+.DS_Store
+code
+secret.json
+```
+
+The listed name matches files or folders, so 'code' could ignore a folder named 'code'.
+Listing filepaths won't work.
+
+
 ## TODO
 * Nothing right now :)
