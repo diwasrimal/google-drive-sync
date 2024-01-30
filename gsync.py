@@ -385,7 +385,7 @@ def record_download(
         INSERT OR REPLACE INTO
         downloads(file_id, parent_id, remote_name, remote_mime, local_name, exported)
         VALUES(?, ?, ?, ?, ?, ?)""",
-        [file_id, parent_id, remote_name, local_name, remote_mime, is_exported],
+        [file_id, parent_id, remote_name, remote_mime, local_name, is_exported],
     )
     db.commit()
 
